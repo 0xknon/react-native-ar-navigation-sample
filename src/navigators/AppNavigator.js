@@ -11,11 +11,7 @@ export const AppNavigator = DrawerNavigator(
     Home: {
       screen: Home,
       path: 'home',
-    },
-    Test: {
-      screen: Test,
-      path: 'test',
-    },
+    }
   },
   {
     drawerOpenRoute: 'DrawerOpen',

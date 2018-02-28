@@ -1,7 +1,8 @@
-import Expo, { Asset } from 'expo';
+import Expo, { Asset, Location, Permissions, Constants } from 'expo';
 import React from 'react';
-import { View, Dimensions } from 'react-native';
+import { View, Dimensions, Text } from 'react-native';
 import { StackNavigator } from 'react-navigation'
+import { GooglePlacesAutocomplete } from 'react-native-google-places-autocomplete';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 
 require('../../../OBJLoader');
@@ -12,6 +13,7 @@ import ExpoTHREE from 'expo-three'; // 2.0.2
 import DrawerButton from '../../components/DrawerButton'
 
 import { THEME_COLOR } from '../../config'
+import styles from './styles'
 const { width, height } = Dimensions.get("window")
 
 console.disableYellowBox = true;
@@ -24,10 +26,63 @@ const scaleLongestSideToSize = (mesh, size) => {
     mesh.scale.set(scale, scale, scale);
 }
 
+Math.radians = function(degrees) {
+    return degrees * Math.PI / 180;
+};
+   
+// Converts from radians to degrees.
+Math.degrees = function(radians) {
+    return radians * 180 / Math.PI;
+};
+const getDistanceFromPoints = (lat1,lon1,lat2,lon2) => {
+    var R = 6371; // Radius of the earth in km
+    var dLat = Math.radians(lat2-lat1);  // deg2rad below
+    var dLon = Math.radians(lon2-lon1); 
+    var a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(Math.radians(lat1)) * Math.cos(Math.radians(lat2)) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2)
+      ; 
+    
+    var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
+    var d = R * c; // Distance in km
+    return d;
+}
+
+const calAngleFromNorth = (myLat, myLong, targetLat, targetLong) => {
+    let latDistance = targetLat - myLat;
+    let longDistance = targetLong - myLong;
+
+    let angle = 0;
+    let absoluteAngle = Math.atan(Math.abs(latDistance) / Math.abs(longDistance))
+    if (latDistance >= 0 && longDistance >= 0) {
+        angle = (90 * Math.PI / 180) - absoluteAngle;
+    } else if (latDistance >= 0 && longDistance < 0) {
+        angle = (270 * Math.PI / 180) + absoluteAngle;
+    } else if (latDistance < 0 && longDistance < 0) {
+        angle = (270 * Math.PI / 180) - absoluteAngle;
+    } else if (latDistance < 0 && longDistance >= 0) {
+        angle = (90 * Math.PI / 180) + absoluteAngle;
+    }
+    return Math.degrees(angle);
+}
+
 
 class Home extends React.Component {
+    arrow = null;
+
     state = {
         loaded: false,
+        searchText: '',
+        latitude: 0,
+        longitude: 0,
+        targetLatitude: 0,
+        targetLongitude: 0,
+        isLocationSelected: false,
+        magHeading: 0,
+        angleFromNorth: 0,
+        arrowAngle: 0,
+        distance: 0
     }
 
     static navigationOptions = ({ navigation }) => ({
@@ -54,26 +109,160 @@ class Home extends React.Component {
         ].map((module) => Expo.Asset.fromModule(module).downloadAsync()));
         this.setState({ loaded: true });
     }
-
+    
     componentWillMount() {
-        this.preloadAssetsAsync()
+        this.preloadAssetsAsync();
+        navigator.geolocation.getCurrentPosition(
+            (position) => {
+                this.setState({ 
+                    latitude: position.coords.latitude,
+                    longitude: position.coords.longitude
+                });
+            },
+            (error) => {
+              this._disableRowLoaders();
+              alert(error.message);
+            },
+            {
+              enableHighAccuracy: false,
+              timeout: 20000,
+              maximumAge: 1000
+            }
+        );
+
+        this.watchID = navigator.geolocation.watchPosition((position) => {
+            let { targetLatitude, targetLongitude, isLocationSelected } = this.state;
+            let { latitude, longitude } = position.coords
+            let distance = 0;
+
+            if (this.arrow != null && isLocationSelected)
+                distance = getDistanceFromPoints(latitude, longitude, targetLatitude, targetLongitude)
+
+            this.setState({ 
+                latitude,
+                longitude,
+                distance
+            });
+
+
+        });
+
+        Expo.Location.watchHeadingAsync((compass) => {
+            let { latitude, longitude, targetLatitude, targetLongitude, isLocationSelected } = this.state;
+            let angleFromNorth = calAngleFromNorth(latitude, longitude, targetLatitude, targetLongitude)
+            this.setState({ 
+                magHeading: compass.magHeading
+            });
+
+            if (this.arrow != null && isLocationSelected)
+                this.arrow.rotation.z = 1.57 + Math.radians(-1 * (angleFromNorth - compass.magHeading));
+        })
+    }
+
+    componentDidMount() {
+
+    }
+
+    renderGoogleSearch() {
+        let { searchText, latitude, longitude } = this.state;
+        return(
+
+            <View style={{left: 10, top: 64, position: 'absolute', width: width - 20, backgroundColor: 'white'}}>
+                <GooglePlacesAutocomplete
+                    placeholder='Search'
+                    minLength={2} // minimum length of text to search
+                    autoFocus={false}
+                    returnKeyType={'search'} // Can be left out for default return key https://facebook.github.io/react-native/docs/textinput.html#returnkeytype
+                    listViewDisplayed='auto'    // true/false/undefined
+                    fetchDetails={true}
+                    renderDescription={row => row.description} // custom description render
+                    onPress={(data, details = null) => { // 'details' is provided when fetchDetails = true
+                        let { latitude, longitude, targetLatitude, targetLongitude, isLocationSelected, magHeading } = this.state;
+                        let distance = getDistanceFromPoints(latitude, longitude, details.geometry.location.lat, details.geometry.location.lng)
+                        this.setState({
+                            isLocationSelected: (data.description != '')? true : false,
+                            searchText: data.description,
+                            targetLatitude: details.geometry.location.lat,
+                            targetLongitude: details.geometry.location.lng,
+                            distance
+                        })
+
+                        let angleFromNorth = calAngleFromNorth(latitude, longitude, details.geometry.location.lat, details.geometry.location.lng )
+                        this.arrow.rotation.z = 1.57 + Math.radians(-1 * (angleFromNorth - magHeading));
+                        
+
+                    }}
+                    textInputProps={{
+                        value: searchText,
+                        onChangeText: (searchText) => this.setState({searchText})
+                    }} 
+                    getDefaultValue={() => ''}
+                    
+                    query={{
+                        // available options: https://developers.google.com/places/web-service/autocomplete
+                        key: 'AIzaSyC3AQ_gcSsvb_8dcxgBHEUK6YdXEzR2yOQ',
+                        language: 'en', // language of the results
+                        types: 'geocode', // default: 'geocode'
+                        radius: 10000,
+                        location: latitude+','+longitude
+                    }}
+                    
+                    styles={{
+                        textInputContainer: {
+                            width: '100%'
+                        },
+                        description: {
+                            fontWeight: 'bold'
+                        },
+                        predefinedPlacesDescription: {
+                            color: '#1faadb'
+                        }
+                    }}
+                    
+                    nearbyPlacesAPI='GooglePlacesSearch' // Which API to use: GoogleReverseGeocoding or GooglePlacesSearch
+                    GoogleReverseGeocodingQuery={{
+                        // available options for GoogleReverseGeocoding API : https://developers.google.com/maps/documentation/geocoding/intro
+                    }}
+                    GooglePlacesSearchQuery={{
+                        // available options for GooglePlacesSearch API : https://developers.google.com/places/web-service/search
+                        rankby: 'distance',
+                        types: 'food'
+                    }}
+
+                    filterReverseGeocodingByTypes={['locality', 'administrative_area_level_3']} 
+                    debounce={200} 
+                    
+                    />
+            </View>
+        );
+    }
+
+    renderDistanceBox() {
+        return (
+            <View style={styles.distanceBox} >
+                <Text>{this.state.distance.toFixed(3)} km</Text>
+            </View>
+        );
     }
 
     render() {
+        let { latitude, longitude } = this.state
         return (
             <View style={{flex: 1}} >
                 <Expo.GLView
                     ref={(ref) => this._glView = ref}
                     style={{ flex: 1 }}
-                    onContextCreate={this._onGLContextCreate}
-                />
+                    onContextCreate={this._onGLContextCreate} />
                 <Expo.GLView
                     style={{ position: 'absolute', width, height }}
-                    onContextCreate={this.arrowContextCreate}
-                />
+                    onContextCreate={this.arrowContextCreate} />
+
+                { this.renderGoogleSearch() }
+                { this.renderDistanceBox() }
             </View>
         );
     }
+
 
     arrowContextCreate = async (gl) => {
         const width = gl.drawingBufferWidth;
@@ -107,23 +296,23 @@ class Home extends React.Component {
         const modelAsset = Asset.fromModule(require('../../../assets/arrow.obj'));
         await modelAsset.downloadAsync();
         const loader = new THREE.OBJLoader();
-        const model = loader.parse(
+
+        this.arrow = loader.parse(
             await Expo.FileSystem.readAsStringAsync(modelAsset.localUri))
-        model.position.z = -0.4;
-        model.position.y = -0.1;
-        model.rotation.x += -1.2;
-        //model.rotation.y += 1.57;
-        model.rotation.z += 1.57;
-        scaleLongestSideToSize(model, 0.15);
+        this.arrow.position.z = -0.4;
+        this.arrow.position.y = -0.1;
 
-        scene.add(model);
+        this.arrow.rotation.x = -1.2;
+        this.arrow.rotation.z = 1.57;
+        
+        scaleLongestSideToSize(this.arrow, 0.15);
 
+        scene.add(this.arrow);
+        
         const render = () => {
             requestAnimationFrame(render);
-      
+
             renderer.render(scene, camera);
-      
-            // NOTE: At the end of each frame, notify `Expo.GLView` with the below
             gl.endFrameEXP();
         };
         render();

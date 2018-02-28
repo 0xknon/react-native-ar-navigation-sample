@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "dire-dire-ducks",
-    "description": "Flood your room with water and wooden ducks! You can go underwater too!",
-    "slug": "dire-dire-ducks",
+    "name": "ARNavigation",
+    "description": "Use AR to do navigation",
+    "slug": "ARNavigation",
     "privacy": "public",
     "sdkVersion": "21.0.0",
     "version": "1.0.0",
@@ -16,7 +16,8 @@
       "assetExts": ["ttf", "mp4", "obj"]
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": false,
+      "bundleIdentifier": "com.knyu.arnavigation" 
     }
   }
 }
